@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">ffmpeg_android_demo_3</string>
+    <string name="btn_start">Start</string>
 </resources>
