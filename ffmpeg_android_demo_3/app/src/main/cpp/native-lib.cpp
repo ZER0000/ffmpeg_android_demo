@@ -43,6 +43,7 @@ Java_com_example_nxf31081_ffmpeg_1android_1demo_13_MainActivity_decode(JNIEnv *e
     int				i, videoindex;
     AVCodecContext	*pCodecCtx;
     AVCodec			*pCodec;
+    AVCodecParameters *pCodecPar;
     AVFrame	*pFrame,*pFrameYUV;
     uint8_t *out_buffer;
     AVPacket *packet;
@@ -65,66 +66,79 @@ Java_com_example_nxf31081_ffmpeg_1android_1demo_13_MainActivity_decode(JNIEnv *e
     avformat_network_init();
     pFormatCtx = avformat_alloc_context();
 
-    if(err_code = avformat_open_input(&pFormatCtx,inputurl,NULL,NULL)!=0){
+    if(err_code = avformat_open_input(&pFormatCtx, inputurl, NULL, NULL) != 0){
         av_strerror(err_code, err_buf, 1024);
         LOGE("Couldn't open input stream %s, error code: %d (%s). \n", inputurl, err_code, err_buf);
         return -1;
     }
-    if(avformat_find_stream_info(pFormatCtx,NULL)<0){
+    if(avformat_find_stream_info(pFormatCtx, NULL)<0){
         LOGE("Couldn't find stream information.\n");
         return -1;
     }
-    videoindex=-1;
-    for(i=0; i<pFormatCtx->nb_streams; i++)
-        if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO){
-            videoindex=i;
+
+    videoindex = -1;
+    for(i = 0; i < pFormatCtx->nb_streams; i++)
+        if(pFormatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO){
+            videoindex = i;
             break;
         }
-    if(videoindex==-1){
+    if(videoindex == -1){
         LOGE("Couldn't find a video stream.\n");
         return -1;
     }
-    pCodecCtx=pFormatCtx->streams[videoindex]->codec;
-    pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
-    if(pCodec==NULL){
+    pCodecPar = pFormatCtx->streams[videoindex]->codecpar;
+    pCodec = avcodec_find_decoder(pCodecPar->codec_id);
+    if(pCodec == NULL){
         LOGE("Couldn't find Codec.\n");
         return -1;
     }
-    if(avcodec_open2(pCodecCtx, pCodec,NULL)<0){
+
+    pCodecCtx = avcodec_alloc_context3(pCodec);
+
+    //Copy context
+    if(avcodec_parameters_to_context(pCodecCtx, pCodecPar) != 0) {
+        fprintf(stderr, "Couldn't copy codec context.");
+        return -1;
+    }
+
+    LOGI("Stream frame rate ：%d fps\n", pFormatCtx->streams[videoindex]->r_frame_rate.num /
+                           pFormatCtx->streams[videoindex]->r_frame_rate.den);
+
+    if(avcodec_open2(pCodecCtx, pCodec, NULL) < 0) {
         LOGE("Couldn't open codec.\n");
         return -1;
     }
 
-    pFrame=av_frame_alloc();
-    pFrameYUV=av_frame_alloc();
-    out_buffer=(unsigned char *)av_malloc(av_image_get_buffer_size(AV_PIX_FMT_YUV420P,  pCodecCtx->width, pCodecCtx->height,1));
+    pFrame = av_frame_alloc();
+    pFrameYUV = av_frame_alloc();
+    out_buffer = (unsigned char *)av_malloc(av_image_get_buffer_size(AV_PIX_FMT_YUV420P,  pCodecCtx->width, pCodecCtx->height,1));
     av_image_fill_arrays(pFrameYUV->data, pFrameYUV->linesize,out_buffer,
                          AV_PIX_FMT_YUV420P,pCodecCtx->width, pCodecCtx->height,1);
 
-    packet=(AVPacket *)av_malloc(sizeof(AVPacket));
+    packet = (AVPacket *)av_malloc(sizeof(AVPacket));
 
     img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt,
                                      pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
 
 
     sprintf(info,   "[Input     ]%s\n", inputurl);
-    sprintf(info, "%s[Output    ]%s\n",info,outputurl);
-    sprintf(info, "%s[Format    ]%s\n",info, pFormatCtx->iformat->name);
-    sprintf(info, "%s[Codec     ]%s\n",info, pCodecCtx->codec->name);
-    sprintf(info, "%s[Resolution]%dx%d\n",info, pCodecCtx->width,pCodecCtx->height);
+    sprintf(info, "%s[Output    ]%s\n", info, outputurl);
+    sprintf(info, "%s[Format    ]%s\n", info, pFormatCtx->iformat->name);
+    sprintf(info, "%s[Codec     ]%s\n", info, pCodecCtx->codec->name);
+    sprintf(info, "%s[Resolution]%dx%d\n", info, pCodecCtx->width,pCodecCtx->height);
 
 
-    fp_yuv=fopen(outputurl,"wb+");
+    fp_yuv = fopen(outputurl,"wb+");
     if(fp_yuv==NULL){
         printf("Cannot open output file.\n");
         return -1;
     }
 
-    frame_cnt=0;
+    frame_cnt = 0;
     time_start = clock();
 
-    while(av_read_frame(pFormatCtx, packet)>=0){
-        if(packet->stream_index==videoindex){
+    while(av_read_frame(pFormatCtx, packet) >= 0){
+        if(packet->stream_index == videoindex){
             ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
             if(ret < 0){
                 LOGE("Decode Error.\n");
@@ -135,9 +149,9 @@ Java_com_example_nxf31081_ffmpeg_1android_1demo_13_MainActivity_decode(JNIEnv *e
                           pFrameYUV->data, pFrameYUV->linesize);
 
                 y_size=pCodecCtx->width*pCodecCtx->height;
-                fwrite(pFrameYUV->data[0],1,y_size,fp_yuv);    //Y
-                fwrite(pFrameYUV->data[1],1,y_size/4,fp_yuv);  //U
-                fwrite(pFrameYUV->data[2],1,y_size/4,fp_yuv);  //V
+                fwrite(pFrameYUV->data[0], 1, y_size, fp_yuv);    //Y
+                fwrite(pFrameYUV->data[1], 1, y_size/4, fp_yuv);  //U
+                fwrite(pFrameYUV->data[2], 1, y_size/4, fp_yuv);  //V
                 //Output info
                 char pictype_str[10]={0};
                 switch(pFrame->pict_type){
@@ -163,25 +177,25 @@ Java_com_example_nxf31081_ffmpeg_1android_1demo_13_MainActivity_decode(JNIEnv *e
         sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height,
                   pFrameYUV->data, pFrameYUV->linesize);
         int y_size=pCodecCtx->width*pCodecCtx->height;
-        fwrite(pFrameYUV->data[0],1,y_size,fp_yuv);    //Y
-        fwrite(pFrameYUV->data[1],1,y_size/4,fp_yuv);  //U
-        fwrite(pFrameYUV->data[2],1,y_size/4,fp_yuv);  //V
+        fwrite(pFrameYUV->data[0], 1, y_size, fp_yuv);    //Y
+        fwrite(pFrameYUV->data[1], 1, y_size/4, fp_yuv);  //U
+        fwrite(pFrameYUV->data[2], 1, y_size/4, fp_yuv);  //V
         //Output info
         char pictype_str[10]={0};
         switch(pFrame->pict_type){
-            case AV_PICTURE_TYPE_I:sprintf(pictype_str,"I");break;
-            case AV_PICTURE_TYPE_P:sprintf(pictype_str,"P");break;
-            case AV_PICTURE_TYPE_B:sprintf(pictype_str,"B");break;
+            case AV_PICTURE_TYPE_I:sprintf(pictype_str, "I");break;
+            case AV_PICTURE_TYPE_P:sprintf(pictype_str, "P");break;
+            case AV_PICTURE_TYPE_B:sprintf(pictype_str, "B");break;
             default:sprintf(pictype_str,"Other");break;
         }
         LOGI("Frame Index: %5d. Type:%s",frame_cnt,pictype_str);
         frame_cnt++;
     }
     time_finish = clock();
-    time_duration=(double)(time_finish - time_start);
+    time_duration = (double)(time_finish - time_start);
 
-    sprintf(info, "%s[Time      ]%fms\n",info,time_duration);
-    sprintf(info, "%s[Count     ]%d\n",info,frame_cnt);
+    sprintf(info, "%s[Time      ]%fms\n", info, time_duration);
+    sprintf(info, "%s[Count     ]%d\n", info, frame_cnt);
 
     sws_freeContext(img_convert_ctx);
 
